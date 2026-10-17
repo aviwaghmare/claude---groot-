@@ -1,67 +1,51 @@
 <!DOCTYPE html>
 <!--
 =====================================================================
- GROOT CHATBOT : FRONTEND (this single file)  ->  hosted on GitHub Pages
- BACKEND (backend/main.py)                    ->  hosted on Render
+ GROOT CHATBOT : FRONTEND (this single file)  ->  GitHub Pages
+ BACKEND (main.py, data.json, requirements.txt) ->  Render
 =====================================================================
 
- HOW THE TWO PARTS TALK
-   Browser (this file, GitHub Pages)  --POST /chat {message}-->  Render (FastAPI)
-   Browser  <--{answer, score, ...} JSON--                       Render
-   The ONLY link between them is the API_URL constant in the <script> below.
+ HOW THEY CONNECT
+   Browser (this page)  --POST /chat {message}==>  https://groot-chatbot-api.onrender.com
+   Browser  <==answer JSON==           Render backend
+   The ONLY link is the API_URL constant in the <script> below.
+   It is already set to your live backend. No slash at the end!
 
- FOLDER STRUCTURE (one GitHub repo, e.g. "groot-chatbot")
-   groot-chatbot/
-     index.html            <- this file (must be at the repo root for Pages)
-     render.yaml           <- optional, Render blueprint
-     backend/
-       main.py  data.json  requirements.txt
+ YOUR REPO MUST LOOK LIKE THIS (all files at the top level, lowercase names)
+   index.html        <- this file (the name must be exactly index.html)
+   main.py
+   data.json
+   requirements.txt
 
- STEP 1: PUT THE CODE ON GITHUB
-   1. github.com -> New repository -> name "groot-chatbot" -> Public -> Create.
-   2. Upload all files keeping the folder structure
-      (Add file -> Upload files, or use git: git add . && git commit && git push).
+ RENDER SETTINGS (already working)
+   Root Directory : (empty)
+   Build Command  : pip install -r requirements.txt
+   Start Command  : uvicorn main:app --host 0.0.0.0 --port $PORT
+   Instance type  : Free
 
- STEP 2: DEPLOY THE BACKEND ON RENDER (do this BEFORE the frontend)
-   1. render.com -> sign in with GitHub -> New + -> Web Service.
-   2. Pick your "groot-chatbot" repo.
-   3. Fill in:
-        Root Directory : backend
-        Runtime        : Python 3
-        Build Command  : pip install -r requirements.txt
-        Start Command  : uvicorn main:app --host 0.0.0.0 --port $PORT
-        Instance type  : Free
-   4. Environment variables (optional): MIN_SCORE=50, ALLOWED_ORIGINS=*
-   5. Create Web Service. Wait for "Your service is live".
-   6. Copy the URL at the top, e.g. https://groot-chatbot-api.onrender.com
-   7. Test it: open <that URL>/health in the browser. You should see {"status":"awake",...}
-      Interactive docs to try questions: <that URL>/docs
+ PUBLISH THIS PAGE ON GITHUB PAGES
+   1. Replace index.html in your repo with this file
+      (Add file -> Upload files, or open index.html -> pencil icon -> paste -> Commit).
+   2. Repo -> Settings -> Pages -> Source: "Deploy from a branch"
+      -> Branch: main, Folder: /(root) -> Save.
+   3. After ~1 minute open the link Pages shows at the top, like
+      https://YOUR-USERNAME.github.io/YOUR-REPO-NAME/
 
- STEP 3: CONNECT THE FRONTEND TO THE BACKEND
-   Replace the API_URL below with your Render URL (no slash at the end!).
-   Commit the change.
+ TEST THE BACKEND ALONE
+   https://groot-chatbot-api.onrender.com/health   -> {"status":"awake",...}
+   https://groot-chatbot-api.onrender.com/docs     -> try questions by hand
 
- STEP 4: PUBLISH THE FRONTEND ON GITHUB PAGES
-   1. Repo -> Settings -> Pages.
-   2. Source: "Deploy from a branch" -> Branch: main, Folder: /(root) -> Save.
-   3. After ~1 minute your site is live at
-        https://YOUR-USERNAME.github.io/groot-chatbot/
+ IF THE CHAT SAYS "OFFLINE"
+   * Free Render sleeps after ~15 min. The first reply can take 30-60 seconds.
+     This page retries automatically, so just wait.
+   * Render -> Environment -> ALLOWED_ORIGINS must be * (or exactly
+     https://YOUR-USERNAME.github.io, with no path and no trailing slash).
+   * API_URL below must match your Render URL exactly.
 
- STEP 5: LOCK DOWN CORS (recommended)
-   In Render -> your service -> Environment, set
-        ALLOWED_ORIGINS = https://YOUR-USERNAME.github.io
-   (only the domain, no /groot-chatbot path). Render redeploys automatically.
-   If the chat shows a network error, a wrong ALLOWED_ORIGINS is the #1 cause.
-
- GOOD TO KNOW
-   * Free Render servers sleep after ~15 minutes. The first request can take
-     30-60 seconds. This page pings /health when it opens to wake it early.
-   * To teach Groot new things: edit backend/data.json, commit, and Render
-     redeploys. Questions he could not answer appear in Render -> Logs as
-     "UNANSWERED: ...", a ready to-do list for new data.
-   * Change how strict matching is with MIN_SCORE (45 = lenient, 70 = strict).
-   * Test locally: run the backend (uvicorn main:app --reload), then set
-     API_URL = "http://127.0.0.1:8000" and open this file in the browser.
+ TEACH GROOT NEW THINGS
+   Edit data.json on GitHub, commit, and Render redeploys itself.
+   Unanswered questions show in Render -> Logs as "UNANSWERED: ...".
+   Matching strictness: Render env var MIN_SCORE (45 = lenient, 70 = strict).
 =====================================================================
 -->
 <html lang="en">
@@ -216,17 +200,30 @@ function grootSays(d){
   log.scrollTop = log.scrollHeight;
 }
 
+// Calls the backend; retries a few times because the free Render server may be asleep
+async function callApi(text){
+  let lastErr;
+  for (let i = 0; i < 4; i++){
+    try{
+      if (i > 0) setStatus("", "Waking up");
+      const r = await fetch(API_URL + "/chat", {
+        method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({message: text})
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return await r.json();
+    }catch(e){ lastErr = e; await new Promise(res => setTimeout(res, 6000)); }
+  }
+  throw lastErr;
+}
+
 async function ask(text){
   text = text.trim(); if (!text) return;
   bubble("me").textContent = text; input.value = "";
   send.disabled = true;
   const t = bubble("groot"); t.classList.add("typing"); t.innerHTML = "<span></span><span></span><span></span>";
   try{
-    const r = await fetch(API_URL + "/chat", {
-      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({message: text})
-    });
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    const d = await r.json(); t.remove(); grootSays(d); setStatus("ok", "Awake");
+    const d = await callApi(text);
+    t.remove(); grootSays(d); setStatus("ok", "Awake");
   }catch(err){
     t.remove(); setStatus("bad", "Offline");
     const b = bubble("groot");
